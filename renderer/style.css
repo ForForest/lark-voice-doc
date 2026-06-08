@@ -1,0 +1,465 @@
+/* style.css — Beegin Beeni floating voice pill (Wispr Flow-style).
+ *
+ * Layout: a single horizontal pill, 360×42, frameless transparent BrowserWindow,
+ * optionally expanded with a multi-row bind panel + recording status bar.
+ * Sage palette (#5F7A5C / #DCE8DA) for subtle state shifts. No fireworks.
+ */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  width: 100%;
+  background: transparent;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif;
+  color: #ffffff;
+  user-select: none;
+  overflow: hidden;
+  cursor: default;
+}
+
+/* ── the shell (contains pill + optional bind panel + recording status) ── */
+.shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 6px 4px 6px;
+}
+
+/* ── the pill ─────────────────────────────────────────────────────────── */
+.pill {
+  -webkit-app-region: drag;
+  position: relative;
+  flex: 0 0 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 14px;
+  border-radius: 25px;
+  background: rgba(20, 28, 20, 0.85);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid rgba(220, 232, 218, 0.12);
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.4),
+    0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: background 0.25s ease, border-color 0.25s ease;
+  cursor: pointer;
+}
+
+.pill:hover {
+  border-color: rgba(220, 232, 218, 0.2);
+}
+
+/* state-driven background tint (sage range, intentionally subtle) */
+.pill[data-state='LISTENING'] {
+  background: rgba(30, 46, 30, 0.88);
+  border-color: rgba(95, 122, 92, 0.45);
+}
+.pill[data-state='HEARING'] {
+  background: rgba(35, 56, 35, 0.9);
+  border-color: rgba(95, 122, 92, 0.65);
+}
+.pill[data-state='THINKING'] {
+  background: rgba(38, 38, 28, 0.88);
+  border-color: rgba(180, 160, 100, 0.35);
+}
+.pill[data-state='SPEAKING'] {
+  background: rgba(95, 122, 92, 0.88);
+  border-color: rgba(220, 232, 218, 0.4);
+}
+.pill[data-state='ERROR'] {
+  background: rgba(80, 30, 30, 0.88);
+  border-color: rgba(220, 120, 120, 0.5);
+}
+
+/* recording mode tint — slight blue cast */
+.shell[data-mode='recording'] .pill[data-state='IDLE'],
+.shell[data-mode='recording'] .pill[data-state='LISTENING'] {
+  background: rgba(20, 36, 50, 0.88);
+  border-color: rgba(120, 170, 200, 0.45);
+}
+
+/* ── indicator (left side: dot or typing dots) ───────────────────────── */
+.pill__indicator {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.pill__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #dce8da;
+  box-shadow: 0 0 0 0 rgba(220, 232, 218, 0.55);
+  transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.25s ease;
+}
+
+.pill[data-state='IDLE'] .pill__dot {
+  background: #6f7c6c;
+}
+.pill[data-state='LISTENING'] .pill__dot {
+  background: #dce8da;
+  animation: dot-breathe 1.6s ease-in-out infinite;
+}
+.pill[data-state='THINKING'] .pill__dot {
+  background: #e6d28a;
+}
+.pill[data-state='SPEAKING'] .pill__dot {
+  background: #ffffff;
+  animation: dot-pulse 1.1s ease-in-out infinite;
+}
+.pill[data-state='ERROR'] .pill__dot {
+  background: #f0a8a8;
+}
+
+/* recording dot — soft blue */
+.shell[data-mode='recording'] .pill[data-state='IDLE'] .pill__dot,
+.shell[data-mode='recording'] .pill[data-state='LISTENING'] .pill__dot {
+  background: #8fbcd8;
+  animation: dot-breathe 2.4s ease-in-out infinite;
+}
+
+/* typing dots only visible while HEARING (user is mid-utterance) */
+.pill__typing {
+  display: none;
+  gap: 3px;
+  align-items: center;
+}
+.pill[data-state='HEARING'] .pill__dot {
+  display: none;
+}
+.pill[data-state='HEARING'] .pill__typing {
+  display: inline-flex;
+}
+.pill__typing span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #dce8da;
+  display: inline-block;
+  animation: typing-bounce 1.1s ease-in-out infinite;
+}
+.pill__typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.pill__typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* ── text (live transcript / Beeni line / tool firing) ───────────────── */
+.pill__text {
+  flex: 1 1 auto;
+  -webkit-app-region: no-drag;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #ffffff;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  text-overflow: ellipsis;
+  max-height: 36px;
+  letter-spacing: 0.1px;
+}
+
+.pill[data-state='IDLE'] .pill__text {
+  color: rgba(220, 232, 218, 0.65);
+  font-size: 12px;
+  letter-spacing: 0.3px;
+}
+.pill[data-state='SPEAKING'] .pill__text {
+  color: #ffffff;
+}
+.pill[data-state='ERROR'] .pill__text {
+  color: #ffd6d6;
+}
+
+/* ── animations ──────────────────────────────────────────────────────── */
+@keyframes dot-breathe {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(220, 232, 218, 0.45);
+  }
+  50% {
+    transform: scale(1.15);
+    box-shadow: 0 0 0 6px rgba(220, 232, 218, 0);
+  }
+}
+
+@keyframes dot-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 0.75;
+  }
+}
+
+@keyframes typing-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+/* ── mode toggle (left of bind toggle) ─────────────────────────────── */
+.pill__mode-toggle,
+.pill__bind-toggle {
+  -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 13px;
+  border: 1px solid rgba(220, 232, 218, 0.18);
+  background: rgba(220, 232, 218, 0.06);
+  color: rgba(220, 232, 218, 0.85);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.pill__mode-toggle:hover,
+.pill__bind-toggle:hover {
+  background: rgba(220, 232, 218, 0.14);
+  border-color: rgba(220, 232, 218, 0.32);
+}
+.shell[data-mode='recording'] .pill__mode-toggle {
+  background: rgba(120, 170, 200, 0.55);
+  border-color: rgba(180, 220, 240, 0.55);
+  color: #ffffff;
+}
+.shell[data-bind-open='true'] .pill__bind-toggle {
+  background: rgba(95, 122, 92, 0.55);
+  border-color: rgba(220, 232, 218, 0.42);
+  color: #ffffff;
+}
+.shell[data-bound='true'] .pill__bind-toggle {
+  background: rgba(95, 122, 92, 0.7);
+  border-color: rgba(220, 232, 218, 0.55);
+  color: #ffffff;
+}
+
+/* ── bind panel (target row + reference row + chips + status) ──────────── */
+.bind-panel {
+  -webkit-app-region: no-drag;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 14px;
+  background: rgba(20, 28, 20, 0.82);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  border: 1px solid rgba(220, 232, 218, 0.12);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+.shell[data-bind-open='true'] .bind-panel {
+  display: flex;
+}
+
+.bind-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bind-row__label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: rgba(220, 232, 218, 0.78);
+  min-width: 38px;
+  letter-spacing: 0.2px;
+}
+
+.bind-row__input {
+  flex: 1 1 auto;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(220, 232, 218, 0.1);
+  outline: none;
+  border-radius: 9px;
+  color: #ffffff;
+  font-size: 11.5px;
+  font-family: inherit;
+  padding: 4px 8px;
+  min-width: 0;
+  letter-spacing: 0.1px;
+  height: 22px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.bind-row__input::placeholder {
+  color: rgba(220, 232, 218, 0.4);
+}
+.bind-row__input:focus {
+  border-color: rgba(95, 122, 92, 0.65);
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.bind-row__btn {
+  -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 9px;
+  border: 1px solid rgba(95, 122, 92, 0.6);
+  background: rgba(95, 122, 92, 0.55);
+  color: #ffffff;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.18s ease;
+  min-width: 28px;
+}
+.bind-row__btn:hover {
+  background: rgba(95, 122, 92, 0.8);
+}
+.bind-row__btn--ghost {
+  background: transparent;
+  border-color: rgba(220, 232, 218, 0.2);
+  color: rgba(220, 232, 218, 0.7);
+  padding: 0 9px;
+}
+.bind-row__btn--ghost:hover {
+  background: rgba(220, 232, 218, 0.08);
+}
+
+.bind-row--status {
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(220, 232, 218, 0.08);
+}
+
+.bind-row__status {
+  flex: 1 1 auto;
+  font-size: 11px;
+  color: rgba(220, 232, 218, 0.7);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bind-row__status[data-kind='err'] {
+  color: #f0a8a8;
+}
+.bind-row__status[data-kind='ok'] {
+  color: #b8e0b0;
+}
+
+/* ── bound chips (display target + references compactly) ────────────── */
+.bound-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 0;
+}
+
+.bound-chips:empty {
+  display: none;
+}
+
+.bound-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  padding: 2px 6px 2px 7px;
+  border-radius: 9px;
+  background: rgba(95, 122, 92, 0.35);
+  border: 1px solid rgba(95, 122, 92, 0.5);
+  color: #ffffff;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bound-chip--target {
+  background: rgba(120, 165, 110, 0.55);
+  border-color: rgba(180, 220, 170, 0.65);
+}
+
+.bound-chip__remove {
+  -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+.bound-chip__remove:hover {
+  color: #ffffff;
+}
+
+/* ── recording status bar (only visible in recording mode) ────────────── */
+.recording-status {
+  -webkit-app-region: no-drag;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: rgba(20, 36, 50, 0.78);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  border: 1px solid rgba(120, 170, 200, 0.35);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  font-size: 11px;
+  color: rgba(220, 232, 240, 0.9);
+}
+
+.shell[data-mode='recording'] .recording-status {
+  display: flex;
+}
+
+.recording-status__dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff7878;
+  box-shadow: 0 0 0 0 rgba(255, 120, 120, 0.55);
+  animation: rec-blink 1.6s ease-in-out infinite;
+}
+
+@keyframes rec-blink {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(255, 120, 120, 0.55);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 5px rgba(255, 120, 120, 0);
+  }
+}
+
+.recording-status__text {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

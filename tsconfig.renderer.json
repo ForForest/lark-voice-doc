@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "None",
+    "moduleResolution": "Node",
+    "esModuleInterop": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "lib": ["ES2020", "DOM"],
+    "outDir": "renderer",
+    "rootDir": "renderer",
+    "declaration": false,
+    "sourceMap": true,
+    "isolatedModules": false,
+    "types": []
+  },
+  "include": ["renderer/voice-client.ts"],
+  "exclude": ["node_modules"]
+}

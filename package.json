@@ -1,0 +1,40 @@
+{
+  "name": "lark-voice-doc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop voice-driven research-and-writing tool with Doubao tool_use + lark-cli (飞书 docs/whiteboard)",
+  "type": "commonjs",
+  "main": "electron-dist/main.js",
+  "scripts": {
+    "server": "tsx src/server.ts",
+    "cli": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test:minimax": "tsx -e \"import('./src/lib/minimax').then(m => m.synthesizeMinimax({text:'hello world'}).then(r => console.log('mp3 bytes:', r.mp3.length, 'latency:', r.latencyMs, 'ms')))\"",
+    "test:ptt": "tsx scripts/_e2e-renderer-flow-fixed.ts",
+    "test:ptt:bug-repro": "tsx scripts/_e2e-renderer-bug-repro.ts",
+    "test:e2e-real-audio": "tsx scripts/_e2e-ptt-real-audio.ts",
+    "test:e2e-real-electron": "npm run build:pill && tsx scripts/_e2e-real-electron.ts",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "build:renderer": "tsc -p tsconfig.renderer.json",
+    "build:pill": "npm run build:electron && npm run build:renderer",
+    "pill": "npm run build:pill && electron .",
+    "pill:dev": "npm run build:pill && electron . --enable-logging",
+    "start": "npm run build:pill && electron ."
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "openai": "^4.83.0",
+    "uiohook-napi": "^1.5.5",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.5",
+    "@types/ws": "^8.5.13",
+    "electron": "^34.5.8",
+    "menubar": "^9.5.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

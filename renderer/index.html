@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://localhost:3001 ws://localhost:3001; media-src 'self' blob: data: mediastream:; img-src 'self' data:;"
+    />
+    <title>Beeni</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="shell" class="shell" data-bind-open="false" data-mode="ptt">
+      <div id="pill" class="pill" data-state="IDLE" role="button" tabindex="0" aria-label="Beeni voice pill">
+        <div class="pill__indicator" id="indicator">
+          <span class="pill__dot" id="dot"></span>
+          <span class="pill__typing" id="typing" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </span>
+        </div>
+        <div class="pill__text" id="text">按住 ⌃ 说话</div>
+        <button
+          type="button"
+          id="modeToggle"
+          class="pill__mode-toggle"
+          aria-label="切换录音 / 按住说话"
+          title="切换录音 / 按住说话"
+        >⌃</button>
+        <button
+          type="button"
+          id="bindToggle"
+          class="pill__bind-toggle"
+          aria-label="绑定飞书文档"
+          title="绑定飞书文档"
+        >🔗</button>
+      </div>
+      <div id="bindPanel" class="bind-panel" aria-hidden="true">
+        <!-- Target doc row -->
+        <div class="bind-row bind-row--target">
+          <span class="bind-row__label">🎯 目标</span>
+          <input
+            id="targetInput"
+            class="bind-row__input"
+            type="text"
+            placeholder="粘贴目标文档 URL (写入这里)"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <button type="button" id="targetBtn" class="bind-row__btn">设</button>
+        </div>
+        <!-- Reference docs row -->
+        <div class="bind-row bind-row--reference">
+          <span class="bind-row__label">📚 参考</span>
+          <input
+            id="referenceInput"
+            class="bind-row__input"
+            type="text"
+            placeholder="粘贴参考文档 URL (只读)"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <button type="button" id="referenceAddBtn" class="bind-row__btn">+</button>
+        </div>
+        <!-- Bound chips display -->
+        <div id="boundChips" class="bound-chips"></div>
+        <!-- Status bar -->
+        <div class="bind-row bind-row--status">
+          <span id="bindStatus" class="bind-row__status" aria-live="polite"></span>
+          <button type="button" id="bindClearAllBtn" class="bind-row__btn bind-row__btn--ghost" title="清空所有绑定">清空</button>
+        </div>
+      </div>
+      <!-- Recording status bar (only visible in recording mode) -->
+      <div id="recordingStatus" class="recording-status" aria-hidden="true">
+        <span class="recording-status__dot"></span>
+        <span id="recordingStatusText" class="recording-status__text">🎙 录音中</span>
+      </div>
+    </div>
+    <script src="./voice-client.js"></script>
+  </body>
+</html>
