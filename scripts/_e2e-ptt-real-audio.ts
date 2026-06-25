@@ -20,7 +20,7 @@
 
 import 'dotenv/config';
 import WebSocket from 'ws';
-import { synthesizeMinimax } from '../src/lib/minimax';
+import { synthesizeVolc } from '../src/lib/volc-tts';
 import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -62,7 +62,7 @@ function log(line: string): void {
 /* ─── 1. TTS → PCM ────────────────────────────────────────────────────── */
 async function synthChinesePcm16k(text: string): Promise<Buffer> {
   log(`[tts] synthesizing: ${text}`);
-  const { mp3 } = await synthesizeMinimax({ text });
+  const { audio: mp3 } = await synthesizeVolc({ text, format: 'mp3' });
   log(`[tts]  mp3 ${mp3.length} bytes`);
 
   // ffmpeg: stdin mp3 → stdout pcm s16le 16k mono

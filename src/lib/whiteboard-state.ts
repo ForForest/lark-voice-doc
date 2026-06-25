@@ -462,7 +462,11 @@ export class WhiteboardManager {
   async save(state: WhiteboardState): Promise<void> {
     await fs.mkdir(this.dataDir, { recursive: true });
     const file = this.filePath(state.docToken);
-    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    // Unique tmp name per call. Two saves of the same docToken in the same ms
+    // (e.g. a reconnect/overlap) would otherwise collide on an identical tmp
+    // path, and the second rename() would ENOENT-crash the summary. The random
+    // suffix makes each writer's tmp distinct so both renames succeed.
+    const tmp = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
     const serialized = JSON.stringify(state, null, 2);
     await fs.writeFile(tmp, serialized, 'utf-8');
     await fs.rename(tmp, file);

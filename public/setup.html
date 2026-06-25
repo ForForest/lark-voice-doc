@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Beeni · 首次配置</title>
+<style>
+  :root{
+    --bg:#f5f3ee; --card:#fffdf8; --ink:#2b2a26; --muted:#7c776c; --line:#e7e2d6;
+    --sage:#5f7a5c; --sage-soft:#e8f0e5; --amber:#c8821f; --amber-soft:#fbf1de;
+    --ok:#3f8f4f; --bad:#c0492f; --accent:#5f7a5c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;}
+  .wrap{max-width:680px;margin:0 auto;padding:40px 20px 120px}
+  header h1{font-size:26px;margin:0 0 4px;letter-spacing:.5px}
+  header p{margin:0;color:var(--muted)}
+  .top-status{display:inline-flex;align-items:center;gap:8px;margin-top:14px;padding:6px 14px;
+    border-radius:999px;background:var(--sage-soft);color:var(--sage);font-size:13px;font-weight:600}
+  .top-status.warn{background:var(--amber-soft);color:var(--amber)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;margin-top:20px;
+    box-shadow:0 1px 2px rgba(0,0,0,.03)}
+  .card h2{font-size:17px;margin:0 0 2px;display:flex;align-items:center;gap:10px}
+  .num{width:24px;height:24px;border-radius:50%;background:var(--ink);color:#fff;font-size:13px;
+    display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .sub{color:var(--muted);font-size:13px;margin:2px 0 14px 34px}
+  .badge{margin-left:auto;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;
+    background:#eee;color:#999}
+  .badge.ok{background:var(--sage-soft);color:var(--ok)}
+  .field{margin:12px 0 0 34px}
+  label{display:block;font-size:13px;font-weight:600;margin:0 0 5px}
+  label .opt{color:var(--muted);font-weight:400}
+  input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:14px;
+    background:#fff;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  input:focus{outline:none;border-color:var(--sage);box-shadow:0 0 0 3px var(--sage-soft)}
+  .hint{margin:14px 0 0 34px;padding:10px 12px;background:var(--amber-soft);border-radius:10px;
+    font-size:12.5px;color:#7a5a17}
+  .hint b{color:#5c4310}
+  .row{display:flex;gap:10px;align-items:center;margin:14px 0 0 34px;flex-wrap:wrap}
+  a.get{display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-size:13px;font-weight:600;
+    color:#fff;background:var(--sage);padding:8px 14px;border-radius:10px}
+  a.get.alt{background:#fff;color:var(--sage);border:1px solid var(--sage)}
+  a.get:hover{filter:brightness(1.05)}
+  button.test{font-size:13px;font-weight:600;color:var(--ink);background:#fff;border:1px solid var(--line);
+    padding:8px 14px;border-radius:10px;cursor:pointer}
+  button.test:hover{border-color:var(--sage)}
+  .result{font-size:13px;margin-left:8px}
+  .result.ok{color:var(--ok)} .result.bad{color:var(--bad)}
+  pre.cmd{margin:10px 0 0 34px;background:#2b2a26;color:#eee;padding:12px 14px;border-radius:10px;
+    font-size:12.5px;overflow:auto;white-space:pre-wrap;position:relative}
+  .copy{position:absolute;top:8px;right:8px;font-size:11px;background:#444;color:#fff;border:0;
+    padding:4px 8px;border-radius:6px;cursor:pointer}
+  .save-bar{position:fixed;left:0;right:0;bottom:0;background:rgba(255,253,248,.95);
+    border-top:1px solid var(--line);padding:14px 20px;backdrop-filter:blur(6px)}
+  .save-inner{max-width:680px;margin:0 auto;display:flex;align-items:center;gap:14px}
+  button.save{font-size:15px;font-weight:700;color:#fff;background:var(--ink);border:0;
+    padding:12px 26px;border-radius:12px;cursor:pointer}
+  button.save:disabled{opacity:.5;cursor:default}
+  .save-msg{font-size:13px;color:var(--muted)}
+  .save-msg.ok{color:var(--ok);font-weight:600}
+  .done{display:none;text-align:center;padding:40px 20px}
+  .done.show{display:block}
+  .done .big{font-size:48px}
+  .done h2{margin:10px 0 6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🐝 Beeni · 首次配置</h1>
+    <p>填入你自己的 API key 就能用。只会写到本地 <code>.env</code>，不上传、不进 git。</p>
+    <div id="topStatus" class="top-status warn">检查配置中…</div>
+  </header>
+
+  <!-- 火山语音 -->
+  <section class="card" id="card-volc">
+    <h2><span class="num">1</span> 火山引擎语音 <span id="badge-volc" class="badge">未配置</span></h2>
+    <div class="sub">让 Beeni 能「听」你说话、用语音「说」回你（ASR + TTS）。</div>
+    <div class="field">
+      <label>App ID</label>
+      <input id="VOLC_APP_ID" placeholder="例如 8306242425" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="field">
+      <label>Access Token</label>
+      <input id="VOLC_ACCESS_TOKEN" placeholder="应用详情页的 Access Token" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="field">
+      <label>Secret Key <span class="opt">(可选，本工具用不到)</span></label>
+      <input id="VOLC_SECRET_KEY" placeholder="留空也行" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="hint">
+      ⚠️ <b>最容易卡的一步</b>：在同一个应用上，要分别「<b>开通服务</b>」——『流式语音识别(大模型)』<b>和</b>『大模型语音合成 Seed-TTS』两个都要开。只拿到 key 但没开通，会鉴权失败。
+    </div>
+    <div class="row">
+      <a class="get" href="https://console.volcengine.com/speech/app" target="_blank" rel="noopener">去火山语音控制台拿 App ID / Token ↗</a>
+      <button class="test" onclick="test('volc')">测试连接</button>
+      <span id="res-volc" class="result"></span>
+    </div>
+  </section>
+
+  <!-- 豆包方舟 -->
+  <section class="card" id="card-ark">
+    <h2><span class="num">2</span> 豆包方舟 (Ark) <span id="badge-ark" class="badge">未配置</span></h2>
+    <div class="sub">智商最高的那颗大脑——负责跟你聊创意 + 把讨论画成画板。</div>
+    <div class="field">
+      <label>ARK_API_KEY</label>
+      <input id="ARK_API_KEY" placeholder="ark-xxxxxxxx…" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="hint">
+      ⚠️ 拿到 key 后，还要去「<b>开通管理</b>」开通这两个模型：<b>doubao-seed-2-0-pro</b>（对话）和 <b>doubao-seed-2-0-mini</b>（画板）。没开通模型，调用会 NotFound。
+    </div>
+    <div class="row">
+      <a class="get" href="https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey" target="_blank" rel="noopener">创建 API Key ↗</a>
+      <a class="get alt" href="https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement" target="_blank" rel="noopener">开通模型 ↗</a>
+      <button class="test" onclick="test('ark')">测试连接</button>
+      <span id="res-ark" class="result"></span>
+    </div>
+  </section>
+
+  <!-- 飞书 -->
+  <section class="card" id="card-feishu">
+    <h2><span class="num">3</span> 飞书画板 <span class="badge" style="background:#eef;color:#778">可选</span></h2>
+    <div class="sub">把讨论实时落到飞书白板。<b>这步不是填 key</b>，是在终端跑一次浏览器授权。不弄也能语音聊，只是画板落不进飞书。</div>
+    <pre class="cmd"><button class="copy" onclick="copyCmd(this)">复制</button>npx -y @larksuite/cli@latest config init --new
+npx -y @larksuite/cli@latest auth login --domain docs,markdown,wiki</pre>
+    <div class="row">
+      <a class="get alt" href="https://open.feishu.cn/app" target="_blank" rel="noopener">飞书开放平台 ↗</a>
+      <span class="result" style="color:var(--muted)">跑完上面两条命令、浏览器点授权即可。</span>
+    </div>
+  </section>
+</div>
+
+<div class="save-bar" id="saveBar">
+  <div class="save-inner">
+    <button class="save" id="saveBtn" onclick="save()">保存并启动</button>
+    <span id="saveMsg" class="save-msg">火山 + 豆包 都填好就能开始。</span>
+  </div>
+</div>
+
+<div class="done" id="done">
+  <div class="big">✅</div>
+  <h2>配置完成！</h2>
+  <p>可以关掉这个页面，Beeni 正在为你启动…</p>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+async function refresh(){
+  try{
+    const s = await (await fetch('/api/setup/status')).json();
+    setBadge('volc', s.volc); setBadge('ark', s.ark);
+    const ts = $('topStatus');
+    if(s.allReady){ ts.textContent='✓ 核心配置已就绪'; ts.className='top-status'; }
+    else { ts.textContent='还需要填：' + [!s.volc&&'火山语音', !s.ark&&'豆包'].filter(Boolean).join(' + '); ts.className='top-status warn'; }
+    return s;
+  }catch(e){ $('topStatus').textContent='连不上本地服务'; }
+}
+function setBadge(which, ok){
+  const b = $('badge-'+which);
+  b.textContent = ok ? '✓ 已配置' : '未配置';
+  b.className = 'badge' + (ok?' ok':'');
+}
+async function test(service){
+  const res = $('res-'+service); res.textContent='测试中…'; res.className='result';
+  const body = service==='ark'
+    ? { service:'ark', ARK_API_KEY: $('ARK_API_KEY').value.trim() }
+    : { service:'volc', VOLC_APP_ID: $('VOLC_APP_ID').value.trim(), VOLC_ACCESS_TOKEN: $('VOLC_ACCESS_TOKEN').value.trim() };
+  try{
+    const r = await (await fetch('/api/setup/test',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})).json();
+    res.textContent = r.detail || (r.ok?'✓ 可用':'✗ 失败');
+    res.className = 'result ' + (r.ok?'ok':'bad');
+  }catch(e){ res.textContent='✗ '+e.message; res.className='result bad'; }
+}
+async function save(){
+  const btn=$('saveBtn'), msg=$('saveMsg'); btn.disabled=true; msg.textContent='保存中…'; msg.className='save-msg';
+  const body={
+    VOLC_APP_ID:$('VOLC_APP_ID').value.trim(), VOLC_ACCESS_TOKEN:$('VOLC_ACCESS_TOKEN').value.trim(),
+    VOLC_SECRET_KEY:$('VOLC_SECRET_KEY').value.trim(), ARK_API_KEY:$('ARK_API_KEY').value.trim(),
+  };
+  try{
+    const r = await (await fetch('/api/setup/save',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})).json();
+    btn.disabled=false;
+    if(r.ok && r.status){
+      setBadge('volc', r.status.volc); setBadge('ark', r.status.ark);
+      if(r.status.allReady){
+        document.querySelector('.wrap').style.display='none';
+        $('saveBar').style.display='none';
+        $('done').classList.add('show');
+      } else {
+        msg.textContent='已保存。还差：' + [!r.status.volc&&'火山语音', !r.status.ark&&'豆包'].filter(Boolean).join(' + ');
+        msg.className='save-msg';
+      }
+    } else { msg.textContent='保存失败：'+(r.error||'?'); }
+  }catch(e){ btn.disabled=false; msg.textContent='保存失败：'+e.message; }
+}
+function copyCmd(b){
+  const txt=b.parentElement.textContent.replace('复制','').trim();
+  navigator.clipboard.writeText(txt).then(()=>{b.textContent='已复制';setTimeout(()=>b.textContent='复制',1500);});
+}
+// prefill which are already set (presence only)
+(async()=>{
+  const s = await refresh();
+  if(s && s.present){
+    for(const k of ['VOLC_APP_ID','VOLC_ACCESS_TOKEN','ARK_API_KEY']){
+      if(s.present[k]){ $(k).placeholder='已配置（留空则保留）'; }
+    }
+  }
+})();
+</script>
+</body>
+</html>

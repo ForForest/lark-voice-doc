@@ -9,7 +9,8 @@
     "server": "tsx src/server.ts",
     "cli": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
-    "test:minimax": "tsx -e \"import('./src/lib/minimax').then(m => m.synthesizeMinimax({text:'hello world'}).then(r => console.log('mp3 bytes:', r.mp3.length, 'latency:', r.latencyMs, 'ms')))\"",
+    "test:tts": "tsx scripts/_smoke-volc-tts.ts",
+    "test:realtime": "tsx scripts/_e2e-realtime-whiteboard.ts",
     "test:ptt": "tsx scripts/_e2e-renderer-flow-fixed.ts",
     "test:ptt:bug-repro": "tsx scripts/_e2e-renderer-bug-repro.ts",
     "test:e2e-real-audio": "tsx scripts/_e2e-ptt-real-audio.ts",
@@ -29,6 +30,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@larksuite/cli": "^1.0.57",
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.5",
     "@types/ws": "^8.5.13",

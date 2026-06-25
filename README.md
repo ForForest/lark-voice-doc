@@ -13,13 +13,19 @@ documents and whiteboards.
 
 - **Voice in** — captures microphone audio and streams it to Volcengine (火山)
   streaming ASR for real-time Chinese/English transcription.
-- **Agent in the middle** — feeds your speech to Doubao (Ark) — an
-  OpenAI-compatible LLM with `tool_use` — running a small tool-calling loop. The
-  agent can search a local repo, read files, create/update Lark docs, and
-  draw/update Lark whiteboards (as Mermaid diagrams).
-- **Voice + visual out** — speaks back via MiniMax Chinese TTS, and renders
-  structure to a bound Lark whiteboard. A "recording" mode listens to a meeting
-  and periodically summarizes the discussion into a diagram without talking back.
+- **Agent in the middle** — feeds your speech to **Doubao Seed 2.0 Pro** (Ark) —
+  an OpenAI-compatible LLM with `tool_use` and adaptive deep-thinking — running a
+  small tool-calling loop. The agent can search a local repo, read files,
+  create/update Lark docs, and draw/update Lark whiteboards (as Mermaid diagrams).
+- **Voice + visual out** — speaks back via **火山 (Volcengine) big-model TTS**
+  (Seed-TTS 2.0), and renders structure to a bound Lark whiteboard.
+- **Live whiteboard** — as you talk, the discussion is scribed onto the bound
+  whiteboard in near-real-time (debounced; a fast Doubao Seed 2.0 Mini proposer
+  emits incremental diagram edits) — like someone writing on a board while you
+  brainstorm. A "recording" mode does the same for a meeting without talking back.
+
+> **All-Doubao/火山 stack.** Everything runs on 字节火山方舟: 火山 ASR + 火山 TTS +
+> 豆包 Ark LLM. (MiniMax / Gemini / DeepSeek were removed.)
 
 It runs as a small Electron menubar app (the "pill") backed by a local
 Express + WebSocket server.
@@ -27,17 +33,20 @@ Express + WebSocket server.
 ## Architecture
 
 ```
-  mic ──▶ Volcengine ASR (streaming STT)
+  mic ──▶ 火山 ASR (streaming STT)
                 │  transcript
+                ├───────────────▶ live whiteboard scribe (debounced):
+                │                   Doubao Seed 2.0 Mini → state transitions
+                │                   → render Mermaid → push to 飞书 board
                 ▼
-        Doubao (Ark) LLM  ──tool_use──▶  tools:
+        Doubao Seed 2.0 Pro (Ark) ──tool_use──▶  tools:
                 │                          • search_repo / read_file (local)
                 │                          • create_doc / update_doc / fetch_doc (Lark)
                 │                          • update_whiteboard / fetch_whiteboard (Lark)
                 │                          • web_search (stub)
                 │                          • memory/* (optional, local Claude Code data)
                 ▼
-        MiniMax TTS ──▶ speaker     +     Lark doc / whiteboard (visual output)
+        火山 big-model TTS ──▶ speaker   +   Lark doc / whiteboard (visual output)
 ```
 
 - `electron/` — Electron main + preload (the menubar pill window).
@@ -45,18 +54,23 @@ Express + WebSocket server.
   `voice-client.js` (the compiled JS is git-ignored — build before running).
 - `src/server.ts` — Express + WS host. Endpoints for TTS, STT (WS), Lark
   doc/whiteboard ops, and the agent loop.
-- `src/lib/` — building blocks: `volc-stt.ts`, `minimax.ts`, `agent-loop.ts`
-  (the tool-calling conversation), `tools.ts` (tool schemas + executors),
-  `lark.ts` (wraps the Lark CLI), `whiteboard-*.ts` (state machine + Mermaid
-  rendering), `claude-memory.ts` (optional local memory tools).
-- `scripts/` — end-to-end and smoke tests.
+- `src/lib/` — building blocks: `volc-stt.ts` (火山 ASR), `volc-tts.ts` (火山
+  big-model TTS), `agent-loop.ts` (the tool-calling conversation + the live
+  whiteboard `RecordingSession`), `tools.ts` (tool schemas + executors),
+  `lark.ts` (wraps the Lark CLI — invokes the local binary, not `npx`),
+  `whiteboard-*.ts` (state machine + Mermaid rendering), `claude-memory.ts`
+  (optional local memory tools).
+- `scripts/` — end-to-end and smoke tests. Notably `npm run test:realtime`
+  (live whiteboard E2E), `npm run test:tts` (火山 TTS smoke).
 - `data/` — runtime whiteboard state (git-ignored; regenerated as needed).
 
 ## Prerequisites
 
-- **Node.js** (18+ recommended).
-- **API credentials** for MiniMax, Volcengine ASR, and Doubao (Ark). Gemini and
-  DeepSeek keys are optional. See [`.env.example`](./.env.example).
+- **Node.js** (18+ recommended; tested on 22).
+- **API credentials** for Volcengine 火山 (one app id + access token covers both
+  ASR and big-model TTS — each product must be separately "开通"/enabled on the
+  app) and Doubao Ark (`ARK_API_KEY`). See [`.env.example`](./.env.example).
+  No MiniMax / Gemini / DeepSeek keys are used anymore.
 - **Lark / 飞书 CLI + OAuth** (external dependency, see below) — only needed for
   the doc/whiteboard tools. Research tools (`search_repo`, `read_file`) and
   voice work without it.
@@ -77,11 +91,40 @@ Until OAuth is configured, any `create_doc` / `update_doc` / `update_whiteboard`
 (surfaced verbatim from the CLI). The rest of the app — voice, transcription,
 LLM reasoning, local `search_repo` / `read_file` — works fine without it.
 
-## Setup
+## Setup — easiest path (first-run wizard)
+
+No keys ship in this repo. On first launch you get a **setup wizard** that walks
+you through getting and entering your own keys (with direct "get it here" links
+and a live "test connection" button for each), and writes them to a local
+`.env` for you:
 
 ```sh
 npm install
-cp .env.example .env      # then fill in your real keys
+npm run pill          # or double-click 启动Beeni.command (macOS)
+```
+
+If `.env` is missing keys, a **首次配置 / Setup** window opens automatically.
+Fill in:
+- **火山引擎语音** (App ID + Access Token) — get them at
+  <https://console.volcengine.com/speech/app>. ⚠️ On that app you must separately
+  **开通 (enable)** both *流式语音识别(大模型)* and *大模型语音合成 (Seed-TTS)*.
+- **豆包方舟** (`ARK_API_KEY`) — create one at
+  <https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey>, then **开通**
+  the models `doubao-seed-2-0-pro` + `doubao-seed-2-0-mini` at
+  <https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement>.
+
+Once 火山 + 豆包 test green and you click 保存, the pill starts automatically.
+
+> Prefer manual? `cp .env.example .env` and fill it in — same result.
+
+### Optional: 飞书 whiteboard (one-time terminal login)
+
+To push diagrams into a real 飞书 board, configure the official Lark CLI once
+(browser OAuth — not an `.env` key). Voice + LLM work without this.
+
+```sh
+npx -y @larksuite/cli@latest config init --new
+npx -y @larksuite/cli@latest auth login --domain docs,markdown,wiki
 ```
 
 ## Running

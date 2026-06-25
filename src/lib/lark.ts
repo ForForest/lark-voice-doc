@@ -14,9 +14,36 @@
  */
 
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 
-const LARK_CLI = ['@larksuite/cli@latest'];
 const DEFAULT_TIMEOUT_MS = Number(process.env.LARK_CMD_TIMEOUT_MS || 60_000);
+
+/**
+ * Resolve how to launch lark-cli ONCE at module load. Prefer the locally
+ * installed binary (`node node_modules/@larksuite/cli/scripts/run.js`). This
+ * avoids the ~4.2s `npx @larksuite/cli@latest` registry-resolution tax on EVERY
+ * call (measured), which is fatal for real-time whiteboard pushes — it drops
+ * per-call latency from ~5-6s to ~2.4s (network-bound). The CLI still reads its
+ * own OAuth/keychain config, so auth + token refresh keep working unchanged.
+ * Falls back to npx only if the local dep is somehow missing.
+ */
+const LARK_LAUNCH: { cmd: string; prefixArgs: string[]; label: string } = (() => {
+  try {
+    const runJs = require.resolve('@larksuite/cli/scripts/run.js');
+    return { cmd: process.execPath, prefixArgs: [runJs], label: 'local @larksuite/cli' };
+  } catch {}
+  try {
+    const pkgPath = require.resolve('@larksuite/cli/package.json');
+    const bin = require('@larksuite/cli/package.json').bin as string | Record<string, string>;
+    const rel = typeof bin === 'string' ? bin : bin['lark-cli'] || Object.values(bin)[0];
+    return {
+      cmd: process.execPath,
+      prefixArgs: [path.join(path.dirname(pkgPath), String(rel))],
+      label: 'local @larksuite/cli (pkg bin)',
+    };
+  } catch {}
+  return { cmd: 'npx', prefixArgs: ['-y', '@larksuite/cli'], label: 'npx fallback (slow)' };
+})();
 
 export interface LarkCommandResult {
   stdout: string;
@@ -31,8 +58,8 @@ export interface LarkCommandResult {
  */
 function runLarkCli(args: string[], stdinPayload?: string): Promise<LarkCommandResult> {
   return new Promise((resolve, reject) => {
-    const fullArgs = ['-y', ...LARK_CLI, ...args];
-    const child = spawn('npx', fullArgs, {
+    const fullArgs = [...LARK_LAUNCH.prefixArgs, ...args];
+    const child = spawn(LARK_LAUNCH.cmd, fullArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: process.env,
     });
@@ -47,7 +74,7 @@ function runLarkCli(args: string[], stdinPayload?: string): Promise<LarkCommandR
       try {
         child.kill('SIGKILL');
       } catch {}
-      reject(new Error(`lark-cli timed out after ${DEFAULT_TIMEOUT_MS}ms: npx ${fullArgs.join(' ')}`));
+      reject(new Error(`lark-cli timed out after ${DEFAULT_TIMEOUT_MS}ms: ${LARK_LAUNCH.cmd} ${fullArgs.join(' ')}`));
     }, DEFAULT_TIMEOUT_MS);
 
     child.stdout.on('data', (chunk: Buffer) => {
@@ -68,6 +95,13 @@ function runLarkCli(args: string[], stdinPayload?: string): Promise<LarkCommandR
       clearTimeout(timer);
       resolve({ stdout, stderr, exitCode: code ?? -1 });
     });
+
+    // EPIPE on stdin is delivered ASYNCHRONOUSLY as an 'error' event (not thrown
+    // by .write()). If the child exits before draining a large payload (e.g. the
+    // CLI shim self-installs then exits), an unhandled stdin 'error' becomes an
+    // uncaughtException and kills the whole server. Swallow it — the real
+    // failure surfaces via the child's exit code/stderr through ensureSuccess.
+    child.stdin.on('error', () => {});
 
     if (stdinPayload !== undefined) {
       try {

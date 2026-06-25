@@ -8,8 +8,10 @@
  *
  *   Endpoint:  https://ark.cn-beijing.volces.com/api/v3/chat/completions
  *   Auth:      Bearer ${ARK_API_KEY}
- *   Default model: doubao-seed-1-6-flash-250828
- *   Hard model:    doubao-seed-1-6-250615
+ *   Default model:   doubao-seed-1-6-flash-250828 ('flash')
+ *   Hard model:      doubao-seed-1-6-250615 ('hard')
+ *   Strongest model: doubao-seed-2-0-pro-260215 ('strongest', + deep thinking)
+ *                    — the conversational creative-partner agent uses this.
  *
  * Streaming protocol (Server-Sent Events from Ark):
  *   Each chunk:  data: {"choices":[{"delta":{"content":"...","tool_calls":[...]}}]}
@@ -35,8 +37,28 @@ import { larkUpdateWhiteboard, larkFetchDoc } from './lark';
 const ARK_ENDPOINT = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
 const DEFAULT_MODEL = 'doubao-seed-1-6-flash-250828';
 const HARD_MODEL = 'doubao-seed-1-6-250615';
+// The smartest model available on this Ark account (verified live, 2026-06-25).
+// Used for the conversational creative-partner agent — intelligence over latency.
+const STRONGEST_MODEL = process.env.DOUBAO_AGENT_MODEL || 'doubao-seed-2-0-pro-260215';
 const MAX_ROUNDS_DEFAULT = 10;
 const MAX_ROUNDS_PER_TURN = 6; // session: smaller per-turn budget; user can ask more
+
+/**
+ * Deep-thinking switch for the agent. Seed 2.0 exposes a `thinking` object on
+ * the OpenAI-compatible body. Default 'auto' lets the model reason deeply on
+ * genuinely hard creative problems (high quality) while staying responsive on
+ * simple turns — the best balance for a real-time voice partner. ('enabled'
+ * forces deep thinking but costs ~40-70s/turn; 'disabled' is fastest.) When
+ * thinking runs, the model streams `reasoning_content` first (our SSE parser
+ * ignores it) then the spoken `content`. Toggle via env DOUBAO_AGENT_THINKING.
+ */
+function thinkingForModel(model: string): { type: string } | undefined {
+  const mode = (process.env.DOUBAO_AGENT_THINKING || 'auto').toLowerCase();
+  if (model === STRONGEST_MODEL && (mode === 'enabled' || mode === 'auto')) {
+    return { type: mode };
+  }
+  return undefined;
+}
 
 export const DEFAULT_SYSTEM_PROMPT =
   '你是一个写文档的助手, 名字叫 Beeni. 你帮 founder 调研 + 写飞书文档 + 画 mermaid 白板. ' +
@@ -149,6 +171,7 @@ export interface AgentRunOptions {
 function resolveModel(m?: string): string {
   if (!m || m === 'flash') return DEFAULT_MODEL;
   if (m === 'hard') return HARD_MODEL;
+  if (m === 'strongest') return STRONGEST_MODEL;
   return m;
 }
 
@@ -157,7 +180,7 @@ function resolveModel(m?: string): string {
 async function callArk(model: string, messages: ChatMessage[]): Promise<any> {
   const apiKey = process.env.ARK_API_KEY;
   if (!apiKey) throw new Error('ARK_API_KEY not set in env');
-  const body = {
+  const body: Record<string, any> = {
     model,
     messages,
     tools: TOOL_SCHEMAS,
@@ -166,6 +189,8 @@ async function callArk(model: string, messages: ChatMessage[]): Promise<any> {
     temperature: 0.5,
     stream: false,
   };
+  const thinking = thinkingForModel(model);
+  if (thinking) body.thinking = thinking;
   const res = await fetch(ARK_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -334,7 +359,7 @@ async function streamArkCall(
   const apiKey = process.env.ARK_API_KEY;
   if (!apiKey) throw new Error('ARK_API_KEY not set in env');
 
-  const body = {
+  const body: Record<string, any> = {
     model,
     messages,
     tools: TOOL_SCHEMAS,
@@ -343,6 +368,8 @@ async function streamArkCall(
     temperature: 0.5,
     stream: true,
   };
+  const thinking = thinkingForModel(model);
+  if (thinking) body.thinking = thinking;
 
   const res = await fetch(ARK_ENDPOINT, {
     method: 'POST',
@@ -508,8 +535,10 @@ export class ConversationSession {
   public currentWhiteboardToken: string | null = null;
   public turnCount = 0;
 
-  constructor(opts?: { systemPrompt?: string; model?: 'flash' | 'hard' | string }) {
-    this.model = resolveModel(opts?.model);
+  constructor(opts?: { systemPrompt?: string; model?: 'flash' | 'hard' | 'strongest' | string }) {
+    // Default the creative-partner agent to the strongest model (intelligence
+    // over latency). Callers can still override with 'flash'/'hard'.
+    this.model = resolveModel(opts?.model || 'strongest');
     this.messages = [
       { role: 'system', content: opts?.systemPrompt || CONVERSATION_SYSTEM_PROMPT },
     ];
@@ -779,6 +808,11 @@ export class ConversationSession {
       }
     } finally {
       this.abortCtrl = null;
+      // A turn interrupted mid-tool-call (user talks over Beeni) can leave the
+      // trailing assistant message with tool_calls that have no matching tool
+      // results. Replaying that on the next turn is a hard Ark 400 that bricks
+      // the session. Backfill synthetic 'aborted' results so history stays valid.
+      this.reconcileDanglingToolCalls();
     }
 
     return {
@@ -788,11 +822,54 @@ export class ConversationSession {
       aborted,
     };
   }
+
+  /**
+   * Ark/OpenAI require every assistant message carrying N tool_calls to be
+   * followed by N tool messages (one per tool_call_id). An interrupted turn can
+   * leave the most-recent assistant message with unanswered tool_calls (aborted
+   * mid-stream with a partial tool_calls array, or interrupted partway through
+   * the tool-execution loop). Replaying that next turn is a hard 400 that bricks
+   * the session until reset(). Backfill a synthetic 'aborted' tool result for
+   * any tool_call_id that has no matching tool message.
+   */
+  private reconcileDanglingToolCalls(): void {
+    const msgs = this.messages;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role !== 'assistant') continue;
+      const tcs = msgs[i].tool_calls;
+      if (!tcs || tcs.length === 0) return; // last assistant had no tools → fine
+      const answered = new Set<string>();
+      for (let j = i + 1; j < msgs.length; j++) {
+        const tj = msgs[j];
+        if (tj.role === 'tool' && tj.tool_call_id) answered.add(tj.tool_call_id);
+      }
+      const missing = tcs.filter((tc) => !answered.has(tc.id));
+      if (missing.length > 0) {
+        // Insert right after the existing trailing tool messages for this turn.
+        let insertAt = i + 1;
+        while (insertAt < msgs.length && msgs[insertAt].role === 'tool') insertAt++;
+        const synth: ChatMessage[] = missing.map((tc) => ({
+          role: 'tool',
+          tool_call_id: tc.id,
+          name: tc.function?.name,
+          content: '{"error":"aborted"}',
+        }));
+        msgs.splice(insertAt, 0, ...synth);
+      }
+      return; // only the most-recent assistant message can dangle
+    }
+  }
 }
 
 // ── RecordingSession (Phase 4: 会议记录员模式) ─────────────────────────────
 
-const DEFAULT_SUMMARY_INTERVAL_MS = 90_000; // 90s timer
+// Real-time whiteboard cadence (replaces the old 90s wall-clock timer):
+//   - after a chunk arrives, wait DEBOUNCE_MS of quiet, then redraw, so the
+//     board updates "as you finish a thought" (like someone writing it down);
+//   - if the user talks nonstop, force a redraw every MAX_WAIT_MS so the board
+//     never falls more than that far behind the conversation.
+const DEFAULT_DEBOUNCE_MS = 2500;
+const DEFAULT_MAX_WAIT_MS = 12_000;
 const RECENT_WINDOW_MS = 3 * 60_000; // last 3 min of transcript per summary
 
 export interface RecordingTranscriptChunk {
@@ -817,8 +894,18 @@ export interface RecordingSessionOptions {
   onSummaryError?: (err: Error) => void;
   /** Called every status tick (~10s) — pill can show "listening for 5 min · last summary 1 min ago". */
   onStatus?: (status: RecordingStatus) => void;
-  /** Interval between auto-summary attempts. Default 90s. */
+  /** Quiet window after the last transcript chunk before redrawing. Default 2.5s. */
+  debounceMs?: number;
+  /** Hard ceiling: force a redraw if the user talks nonstop this long. Default 12s. */
+  maxWaitMs?: number;
+  /** @deprecated kept for backward-compat; aliases debounceMs if set. */
   summaryIntervalMs?: number;
+  /**
+   * Injectable whiteboard push (for tests / alternate transports). Defaults to
+   * the 飞书 CLI push (larkUpdateWhiteboard). A test can pass a stub to verify
+   * the pipeline without a real board.
+   */
+  pushWhiteboard?: (whiteboardToken: string, mermaid: string) => Promise<void>;
 }
 
 export interface RecordingStatus {
@@ -832,26 +919,39 @@ export interface RecordingStatus {
 }
 
 /**
- * RecordingSession — 会议记录员模式.
+ * RecordingSession — live whiteboard scribe.
  *
- * Mic stays open; client VAD-segments and feeds transcript chunks via
- * addTranscript(). Two trigger points push summaries to the bound target
- * whiteboard:
- *   - timer: every summaryIntervalMs (default 90s), summarize last ~3 min
+ * Feeds transcript chunks via addTranscript(); each chunk (re)arms a debounce,
+ * so the bound whiteboard redraws shortly after you finish a thought — like
+ * someone writing on a board while you talk. Trigger points:
+ *   - debounce: DEBOUNCE_MS of quiet after the last chunk (with a MAX_WAIT_MS
+ *     ceiling so nonstop talking still redraws periodically)
  *   - user prompt: triggerSummary({force:true, userHint}) for "总结一下"
  *
- * Beeni stays silent in this mode (TTS off) — only visual whiteboard updates,
- * no voice-back so it doesn't interrupt the human meeting.
+ * Used two ways:
+ *   - recording mode (start()/stop()): mic stays open, Beeni silent (TTS off).
+ *   - PTT live board: addTranscript() called per turn WITHOUT start(); the
+ *     board updates in parallel with Beeni's spoken reply.
+ *
+ * Single-flight: only one summary runs at a time; transcript that arrives while
+ * one is in flight marks the session dirty and re-fires when it finishes, so
+ * the last burst before a pause is never dropped.
  */
 export class RecordingSession {
   private transcriptChunks: RecordingTranscriptChunk[] = [];
   private startedAt = 0;
   private lastSummaryAt = 0;
   private pendingSummary: Promise<void> | null = null;
-  private timerHandle: NodeJS.Timeout | null = null;
   private statusTimerHandle: NodeJS.Timeout | null = null;
+  private debounceHandle: NodeJS.Timeout | null = null;
+  private firstPendingAt = 0; // when the current un-summarized burst started
+  private dirty = false; // transcript arrived while a summary was in flight
+  private closed = false; // torn down (WS close) — no more redraws may schedule
+  private pendingForce = false; // a forced/hinted summary requested mid-flight
+  private pendingUserHint: string | null = null; // hint to carry into the re-fire
   private listening = false;
   private opts: RecordingSessionOptions;
+  private pushFn: (whiteboardToken: string, mermaid: string) => Promise<void>;
 
   /** Bound state mirrored from the parent ConversationSession. */
   public targetDocToken: string | null = null;
@@ -862,6 +962,7 @@ export class RecordingSession {
 
   constructor(opts: RecordingSessionOptions = {}) {
     this.opts = opts;
+    this.pushFn = opts.pushWhiteboard || larkUpdateWhiteboard;
   }
 
   setTarget(target: BoundDocRef | null): void {
@@ -880,32 +981,30 @@ export class RecordingSession {
     if (this.listening) return;
     this.listening = true;
     this.startedAt = Date.now();
-    this.transcriptChunks = [];
     this.lastSummaryAt = 0;
-    const intervalMs = this.opts.summaryIntervalMs || DEFAULT_SUMMARY_INTERVAL_MS;
-    this.timerHandle = setInterval(() => {
-      // Don't trigger if buffer is empty (no one's talking) — skip silently.
-      if (this.transcriptChunks.length === 0) return;
-      // Don't trigger if we just summarized (e.g. user-triggered <15s ago).
-      const sinceLast = Date.now() - this.lastSummaryAt;
-      if (this.lastSummaryAt > 0 && sinceLast < 15_000) return;
-      void this.triggerSummary({ force: false });
-    }, intervalMs);
-    // Status ticker — 10s.
+    // NB: we intentionally do NOT wipe transcriptChunks here — when a PTT
+    // session is upgraded to recording mode on the same instance, the last few
+    // minutes of context (recentChunks windows to 3 min anyway) should carry
+    // over. The 30-min GC in addTranscript bounds growth.
+    // No wall-clock summary timer anymore — redraws are transcript-driven
+    // (debounce in addTranscript). Just keep the status ticker for the pill UI.
     this.statusTimerHandle = setInterval(() => {
       this.emitStatus();
     }, 10_000);
-    // Immediate status emit on start.
     this.emitStatus();
   }
 
   stop(): void {
+    // Always cancel an armed debounce + burst clock, even for a PTT board scribe
+    // that was never start()ed (listening stays false) — otherwise the timer
+    // outlives the session and pushes to a dead board.
+    if (this.debounceHandle) {
+      clearTimeout(this.debounceHandle);
+      this.debounceHandle = null;
+    }
+    this.firstPendingAt = 0;
     if (!this.listening) return;
     this.listening = false;
-    if (this.timerHandle) {
-      clearInterval(this.timerHandle);
-      this.timerHandle = null;
-    }
     if (this.statusTimerHandle) {
       clearInterval(this.statusTimerHandle);
       this.statusTimerHandle = null;
@@ -913,11 +1012,21 @@ export class RecordingSession {
     this.emitStatus();
   }
 
+  /** Tear down on WS close: cancel any armed redraw and block all future ones. */
+  dispose(): void {
+    this.closed = true;
+    this.stop();
+  }
+
   isListening(): boolean {
     return this.listening;
   }
 
-  /** Append a transcript chunk (called from STT 'final' handler in WS server). */
+  /**
+   * Append a transcript chunk (called from the STT 'final' handler, or from the
+   * PTT turn handler with the user's / Beeni's text). Each chunk re-arms the
+   * debounce so the board redraws shortly after the talking pauses.
+   */
   addTranscript(ts: number, text: string): void {
     const t = String(text || '').trim();
     if (!t) return;
@@ -928,6 +1037,42 @@ export class RecordingSession {
     while (this.transcriptChunks.length > 0 && this.transcriptChunks[0].ts < cutoff) {
       this.transcriptChunks.shift();
     }
+    this.scheduleDebouncedSummary();
+  }
+
+  /**
+   * (Re)arm the debounce. Called on every new transcript chunk. Fires a summary
+   * after a quiet window, or immediately once the current talking burst exceeds
+   * the max-wait ceiling. No-op if no whiteboard is bound (nothing to draw to).
+   */
+  private scheduleDebouncedSummary(): void {
+    if (this.closed) return; // session torn down — never schedule a redraw
+    if (!this.targetWhiteboardToken) return; // no board bound — nothing to draw
+    // If a summary is mid-flight, just mark dirty; we re-fire when it finishes
+    // (trailing edge) so the burst that landed during it isn't dropped.
+    if (this.pendingSummary) {
+      this.dirty = true;
+      return;
+    }
+    const debounceMs = this.opts.debounceMs ?? this.opts.summaryIntervalMs ?? DEFAULT_DEBOUNCE_MS;
+    const maxWaitMs = this.opts.maxWaitMs ?? DEFAULT_MAX_WAIT_MS;
+    const now = Date.now();
+    if (this.firstPendingAt === 0) this.firstPendingAt = now;
+    if (this.debounceHandle) {
+      clearTimeout(this.debounceHandle);
+      this.debounceHandle = null;
+    }
+    const fire = () => {
+      this.debounceHandle = null;
+      this.firstPendingAt = 0;
+      void this.triggerSummary({ force: false });
+    };
+    // Ceiling: nonstop talker — don't let the board fall further behind.
+    if (now - this.firstPendingAt >= maxWaitMs) {
+      fire();
+      return;
+    }
+    this.debounceHandle = setTimeout(fire, debounceMs);
   }
 
   /**
@@ -949,15 +1094,29 @@ export class RecordingSession {
     userPrompt?: string;
   } = {}): Promise<void> {
     if (this.pendingSummary) {
-      // One at a time. The new request can race in next interval.
+      // One at a time. If this is an EXPLICIT user request (force/hint), stash
+      // it so the trailing-edge re-fire honors it — otherwise the user's
+      // "总结一下" + its hint would be silently swallowed by the in-flight one.
+      if (options.force || options.userPrompt) {
+        this.pendingForce = true;
+        if (options.userPrompt) this.pendingUserHint = options.userPrompt;
+      }
       return this.pendingSummary;
     }
+    if (this.closed) return; // torn down
     if (!this.targetWhiteboardToken) {
       this.opts.onSummaryError?.(
         new Error('triggerSummary: no targetWhiteboardToken bound — cannot push'),
       );
       return;
     }
+    // We're firing now — cancel any armed debounce so it doesn't double-fire,
+    // and reset the burst clock.
+    if (this.debounceHandle) {
+      clearTimeout(this.debounceHandle);
+      this.debounceHandle = null;
+    }
+    this.firstPendingAt = 0;
     const transcript = this.recentChunks()
       .map((c) => c.text)
       .join('\n');
@@ -965,6 +1124,9 @@ export class RecordingSession {
       // Nothing to summarize.
       return;
     }
+    // Snapshot taken — anything that arrives from here marks us dirty for a
+    // trailing re-fire after this summary completes.
+    this.dirty = false;
     const wbToken = this.targetWhiteboardToken;
     const docToken = this.targetDocToken;
     const userHint = options.userPrompt
@@ -990,6 +1152,20 @@ export class RecordingSession {
     this.emitStatus();
     promise.finally(() => {
       this.pendingSummary = null;
+      if (this.closed) return; // torn down mid-flight — don't re-arm anything
+      // Trailing edge. An explicit forced/hinted request that collided with this
+      // in-flight summary takes priority and re-fires WITH its hint; otherwise a
+      // passive "transcript landed during the summary" redraw.
+      if (this.pendingForce) {
+        const hint = this.pendingUserHint;
+        this.pendingForce = false;
+        this.pendingUserHint = null;
+        this.dirty = false;
+        void this.triggerSummary({ force: true, userPrompt: hint ?? undefined });
+      } else if (this.dirty) {
+        this.dirty = false;
+        this.scheduleDebouncedSummary();
+      }
     });
     return promise;
   }
@@ -1068,7 +1244,7 @@ export class RecordingSession {
     // 3) Render mermaid from state + push to 飞书
     const mermaid = renderMermaid(nextState);
     try {
-      await larkUpdateWhiteboard(wbToken, mermaid);
+      await this.pushFn(wbToken, mermaid);
     } catch (err) {
       // Persisted state is still valid; just couldn't push. Surface the error.
       this.opts.onSummaryError?.(err as Error);
@@ -1116,7 +1292,7 @@ export class RecordingSession {
       );
       return;
     }
-    await larkUpdateWhiteboard(wbToken, result.mermaid);
+    await this.pushFn(wbToken, result.mermaid);
     rememberWhiteboardMermaid(wbToken, result.mermaid);
     this.opts.onSummaryPushed?.({
       whiteboardToken: wbToken,

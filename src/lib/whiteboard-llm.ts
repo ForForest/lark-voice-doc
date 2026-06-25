@@ -12,23 +12,30 @@
  * Backward-compat: `summarizeToMermaid` is kept for the Phase 4 fallback
  * path when transition parsing fails (e.g. LLM returns garbage JSON).
  *
- * Models:
- *   - Primary: Doubao Seed 1.6 reasoning (`doubao-seed-1-6-250615`)
- *   - Fallback: Gemini 2.5 Flash (`gemini-2.5-flash`)
- *   - Pick via env `WHITEBOARD_LLM=doubao|gemini-flash` (default: doubao).
- *     Doubao is slower (~20s) but reasoning produces cleaner transitions;
- *     Gemini Flash is ~5s and "good enough" for short discussions.
+ * Model (consolidated to Doubao — 2026-06-25):
+ *   - Doubao Seed 2.0 Mini (`doubao-seed-2-0-pro` family, fast variant). The
+ *     proposer emits constrained delta-transitions, so a fast model keeps the
+ *     whiteboard real-time (~1.5s/call, verified) — the heavy reasoning lives
+ *     in the conversational agent, not here. Override via env DOUBAO_WB_MODEL.
+ *   - The old Gemini-flash fallback was removed during the all-Doubao swap.
  */
 
 import type { WhiteboardState, WBTransition, WhiteboardKind } from './whiteboard-state';
 import { renderStateDigest } from './whiteboard-render';
 
 const ARK_ENDPOINT = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
-const DOUBAO_REASONING_MODEL = 'doubao-seed-1-6-250615';
-const GEMINI_ENDPOINT_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const GEMINI_FLASH_MODEL = 'gemini-2.5-flash';
+// Fast Seed 2.0 model — keeps the live whiteboard responsive as the user talks.
+const DOUBAO_WHITEBOARD_MODEL = process.env.DOUBAO_WB_MODEL || 'doubao-seed-2-0-mini-260215';
+// Validate the thinking override so an env typo can't silently re-enable the
+// 45-77s deep-think (which would kill the real-time board) or error the request.
+const WB_THINKING_TYPE = (() => {
+  const v = (process.env.DOUBAO_WB_THINKING || 'disabled').toLowerCase();
+  return ['disabled', 'enabled', 'auto'].includes(v) ? v : 'disabled';
+})();
 
-export type WhiteboardLlmChoice = 'doubao' | 'gemini-flash';
+// Kept as a single-member union so existing callers/types stay valid after the
+// Gemini removal; 'doubao' is now the only choice.
+export type WhiteboardLlmChoice = 'doubao';
 
 // ── Common types ────────────────────────────────────────────────────────────
 
@@ -191,7 +198,7 @@ async function callDoubaoReasoning(
   const apiKey = process.env.ARK_API_KEY;
   if (!apiKey) throw new Error('ARK_API_KEY not set');
   const body = {
-    model: DOUBAO_REASONING_MODEL,
+    model: DOUBAO_WHITEBOARD_MODEL,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage },
@@ -199,6 +206,12 @@ async function callDoubaoReasoning(
     temperature: 0.3,
     max_tokens: 1500,
     stream: false,
+    // CRITICAL for real-time: Seed 2.0 otherwise deep-thinks on this structured
+    // task (~45-77s/call, measured). The proposer follows a detailed few-shot
+    // prompt to emit constrained JSON transitions — it doesn't need chain-of-
+    // thought. Disabling thinking drops it to a few seconds so the board keeps
+    // pace with speech. Override via DOUBAO_WB_THINKING if you ever want it.
+    thinking: { type: WB_THINKING_TYPE },
   };
   const res = await fetch(ARK_ENDPOINT, {
     method: 'POST',
@@ -218,45 +231,7 @@ async function callDoubaoReasoning(
   return String(text);
 }
 
-async function callGeminiFlash(
-  systemPrompt: string,
-  userMessage: string,
-): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error('GEMINI_API_KEY not set');
-  const url = `${GEMINI_ENDPOINT_BASE}/${GEMINI_FLASH_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const body = {
-    contents: [
-      {
-        role: 'user',
-        parts: [{ text: `${systemPrompt}\n\n========\n\n${userMessage}` }],
-      },
-    ],
-    generationConfig: {
-      temperature: 0.3,
-      maxOutputTokens: 1500,
-    },
-  };
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const txt = await res.text().catch(() => '');
-    throw new Error(`Gemini HTTP ${res.status}: ${txt.slice(0, 400)}`);
-  }
-  const json: any = await res.json();
-  const text =
-    json?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') || '';
-  if (!text) throw new Error('Gemini returned empty content');
-  return String(text);
-}
-
-function resolveModelChoice(explicit?: WhiteboardLlmChoice): WhiteboardLlmChoice {
-  if (explicit) return explicit;
-  const env = (process.env.WHITEBOARD_LLM || '').toLowerCase().trim();
-  if (env === 'gemini-flash' || env === 'gemini') return 'gemini-flash';
+function resolveModelChoice(_explicit?: WhiteboardLlmChoice): WhiteboardLlmChoice {
   return 'doubao';
 }
 
@@ -349,30 +324,14 @@ export async function proposeTransitions(opts: ProposeOptions): Promise<ProposeR
   const userMessage = lines.join('\n\n');
 
   const t0 = Date.now();
-  let rawText = '';
-  let used: WhiteboardLlmChoice = choice;
-  try {
-    rawText = await callOnce(choice, TRANSITION_SYSTEM_PROMPT, userMessage);
-  } catch (err) {
-    // try fallback if no explicit
-    if (!opts.model) {
-      const fb: WhiteboardLlmChoice = choice === 'doubao' ? 'gemini-flash' : 'doubao';
-      try {
-        rawText = await callOnce(fb, TRANSITION_SYSTEM_PROMPT, userMessage);
-        used = fb;
-      } catch (err2) {
-        throw new Error(
-          `proposeTransitions: both ${choice} and ${fb} failed. last: ${(err2 as Error).message}`,
-        );
-      }
-    } else {
-      throw err;
-    }
-  }
+  const used: WhiteboardLlmChoice = choice;
+  const rawText = await callOnce(choice, TRANSITION_SYSTEM_PROMPT, userMessage);
   const latencyMs = Date.now() - t0;
   const parsed = extractJson(rawText);
   let transitions: WBTransition[] = [];
-  let changeNote = '已更新白板';
+  // Start empty so the skip/applied fallbacks below actually fire when the LLM
+  // omits change_note — otherwise a skip would be mislabeled "已更新白板".
+  let changeNote = '';
   if (parsed && typeof parsed === 'object') {
     if (typeof parsed.change_note === 'string') changeNote = parsed.change_note.trim().slice(0, 80);
     const arr = Array.isArray(parsed.transitions) ? parsed.transitions : [];
@@ -382,6 +341,8 @@ export async function proposeTransitions(opts: ProposeOptions): Promise<ProposeR
   const skipped = transitions.length === 0;
   if (skipped) {
     changeNote = changeNote || '讨论无结构性进展, 跳过';
+  } else {
+    changeNote = changeNote || '已更新白板';
   }
   return {
     transitions,
@@ -394,12 +355,11 @@ export async function proposeTransitions(opts: ProposeOptions): Promise<ProposeR
 }
 
 async function callOnce(
-  choice: WhiteboardLlmChoice,
+  _choice: WhiteboardLlmChoice,
   systemPrompt: string,
   userMessage: string,
 ): Promise<string> {
-  if (choice === 'doubao') return callDoubaoReasoning(systemPrompt, userMessage);
-  return callGeminiFlash(systemPrompt, userMessage);
+  return callDoubaoReasoning(systemPrompt, userMessage);
 }
 
 // ── Phase 4 backward-compat: summarizeToMermaid ─────────────────────────────
@@ -477,25 +437,8 @@ export async function summarizeToMermaid(
   const choice = resolveModelChoice(opts.model);
   const userMessage = buildLegacyUserMessage(opts);
   const t0 = Date.now();
-  let rawText = '';
-  let used: WhiteboardLlmChoice = choice;
-  try {
-    rawText = await callOnce(choice, LEGACY_MERMAID_SYSTEM_PROMPT, userMessage);
-  } catch (err) {
-    if (!opts.model) {
-      const fb: WhiteboardLlmChoice = choice === 'doubao' ? 'gemini-flash' : 'doubao';
-      try {
-        rawText = await callOnce(fb, LEGACY_MERMAID_SYSTEM_PROMPT, userMessage);
-        used = fb;
-      } catch (err2) {
-        throw new Error(
-          `whiteboard-llm legacy: both ${choice} and ${fb} failed. last: ${(err2 as Error).message}`,
-        );
-      }
-    } else {
-      throw err;
-    }
-  }
+  const used: WhiteboardLlmChoice = choice;
+  const rawText = await callOnce(choice, LEGACY_MERMAID_SYSTEM_PROMPT, userMessage);
   const latencyMs = Date.now() - t0;
   const parsed = parseLegacyOutput(rawText);
   return {

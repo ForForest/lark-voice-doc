@@ -508,6 +508,67 @@ function stopBackendServer() {
   serverProc = null;
 }
 
+// ── First-run setup gate ──────────────────────────────────────────────────
+// If .env is missing keys, show the setup wizard (served by the backend at
+// /setup) instead of the pill, then switch to the pill once keys are saved.
+let setupWindow: BrowserWindow | null = null;
+
+async function waitForServerHealth(timeoutMs = 30000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const r = await fetch(`${SERVER_BASE}/api/health`);
+      if (r.ok) return true;
+    } catch { /* not up yet */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return false;
+}
+async function fetchSetupStatus(): Promise<{ allReady: boolean } | null> {
+  try {
+    return (await (await fetch(`${SERVER_BASE}/api/setup/status`)).json()) as any;
+  } catch {
+    return null;
+  }
+}
+function createSetupWindow(): void {
+  if (setupWindow) { setupWindow.focus(); return; }
+  setupWindow = new BrowserWindow({
+    width: 760,
+    height: 820,
+    title: 'Beeni · 首次配置',
+    backgroundColor: '#f5f3ee',
+  });
+  setupWindow.loadURL(`${SERVER_BASE}/setup`);
+  setupWindow.on('closed', () => { setupWindow = null; });
+}
+function launchPill(): void {
+  if (process.platform === 'darwin') app.dock?.hide();
+  createPillWindow();
+  showPill(false);
+  scheduleIdleHide();
+}
+async function bootUI(): Promise<void> {
+  const healthy = await waitForServerHealth();
+  const status = healthy ? await fetchSetupStatus() : null;
+  if (!healthy || (status && status.allReady)) {
+    // Keys present (or we can't tell) — go straight to the pill.
+    launchPill();
+    return;
+  }
+  // Missing keys → setup wizard. Show dock so the window is easy to find.
+  if (process.platform === 'darwin') app.dock?.show();
+  createSetupWindow();
+  const poll = setInterval(async () => {
+    const s = await fetchSetupStatus();
+    if (s && s.allReady) {
+      clearInterval(poll);
+      if (setupWindow) { try { setupWindow.close(); } catch {} setupWindow = null; }
+      launchPill();
+    }
+  }, 2000);
+}
+
 // ── App lifecycle ────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   // macOS: hide from dock — pill is a tray/utility app, not a window app.
@@ -515,13 +576,11 @@ app.whenReady().then(() => {
     app.dock?.hide();
   }
   startBackendServer();
-  createPillWindow();
   createTray();
   registerHotkey();
   setupPushToTalk();
-  // Start visible so the user can see it work; auto-hide after IDLE timer.
-  showPill(false);
-  scheduleIdleHide();
+  // Decide between setup wizard and the pill once the backend is up.
+  void bootUI();
 });
 
 app.on('window-all-closed', () => {

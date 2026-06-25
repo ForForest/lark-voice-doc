@@ -19,7 +19,7 @@
 
 import 'dotenv/config';
 import WebSocket from 'ws';
-import { synthesizeMinimax } from '../src/lib/minimax';
+import { synthesizeVolc } from '../src/lib/volc-tts';
 import { spawn } from 'node:child_process';
 
 const SERVER = process.env.LARK_VOICE_SERVER || 'http://localhost:3001';
@@ -38,7 +38,7 @@ function log(s: string): void {
 }
 
 async function pcmFrom(text: string): Promise<Buffer> {
-  const { mp3 } = await synthesizeMinimax({ text });
+  const { audio: mp3 } = await synthesizeVolc({ text, format: 'mp3' });
   return new Promise((resolve, reject) => {
     const proc = spawn('ffmpeg', [
       '-hide_banner', '-loglevel', 'error',

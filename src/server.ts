@@ -2,8 +2,8 @@
  * server.ts — Express + WS host for lark-voice-doc.
  *
  * Endpoints:
- *   POST /api/tts          — body {text, voice?, format?} → mp3 base64
- *   POST /api/tts-stream   — SSE stream of pcm/mp3 chunks (MiniMax streaming)
+ *   POST /api/tts          — body {text, voice?, format?} → mp3 base64 (火山 TTS)
+ *   POST /api/tts-stream   — SSE stream of mp3/pcm chunks (火山 big-model TTS)
  *   WS   /api/stt          — browser PCM → 火山 ASR partial/final transcripts
  *   POST /api/lark/create-doc            — body {title, markdown} → {docToken}
  *   POST /api/lark/update-doc            — body {docToken, markdown} → ok
@@ -19,7 +19,7 @@ import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
-import { synthesizeMinimax, synthesizeMinimaxStream } from './lib/minimax';
+import { synthesizeVolc, synthesizeVolcStream, prewarmVolcTts } from './lib/volc-tts';
 import { handleVolcStt } from './lib/volc-stt';
 import {
   larkCreateDoc,
@@ -29,6 +29,9 @@ import {
   larkAuthStatus,
 } from './lib/lark';
 import { runAgent, ConversationSession, RecordingSession } from './lib/agent-loop';
+import { getSetupStatus, saveEnv, testArk, testVolc } from './lib/setup';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { WebSocket as WSConn } from 'ws';
 
 const PORT = Number(process.env.PORT || 3001);
@@ -41,21 +44,65 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, port: PORT, time: new Date().toISOString() });
 });
 
+// ── First-run setup wizard ───────────────────────────────────────────────────
+// Serves a local page where a fresh clone fills in their OWN API keys (no keys
+// ship in this repo). Status reports presence only — never the values.
+app.get('/setup', async (_req, res) => {
+  try {
+    const html = await readFile(path.join(process.cwd(), 'public', 'setup.html'), 'utf-8');
+    res.type('html').send(html);
+  } catch (err) {
+    res.status(500).send(`setup page missing: ${(err as Error).message}`);
+  }
+});
+
+app.get('/api/setup/status', (_req, res) => {
+  res.json(getSetupStatus());
+});
+
+app.post('/api/setup/save', async (req, res) => {
+  try {
+    await saveEnv(req.body || {});
+    res.json({ ok: true, status: getSetupStatus() });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: (err as Error).message });
+  }
+});
+
+app.post('/api/setup/test', async (req, res) => {
+  const { service, ARK_API_KEY, VOLC_APP_ID, VOLC_ACCESS_TOKEN } = req.body || {};
+  try {
+    if (service === 'ark') return res.json(await testArk(ARK_API_KEY ?? process.env.ARK_API_KEY ?? ''));
+    if (service === 'volc')
+      return res.json(
+        await testVolc(VOLC_APP_ID ?? process.env.VOLC_APP_ID ?? '', VOLC_ACCESS_TOKEN ?? process.env.VOLC_ACCESS_TOKEN ?? ''),
+      );
+    return res.status(400).json({ ok: false, detail: 'service must be ark | volc' });
+  } catch (err) {
+    res.status(500).json({ ok: false, detail: (err as Error).message });
+  }
+});
+
 // ── TTS ────────────────────────────────────────────────────────────────────
 app.post('/api/tts', async (req: Request, res: Response) => {
   const { text, voice, format } = req.body || {};
   if (!text || typeof text !== 'string') {
     return res.status(400).json({ error: 'text required (string)' });
   }
+  const fmt: 'pcm' | 'mp3' = format === 'pcm' ? 'pcm' : 'mp3';
   try {
-    const { mp3, durationMs, latencyMs } = await synthesizeMinimax({
+    const { audio, durationMs, latencyMs } = await synthesizeVolc({
       text,
       voice,
+      format: fmt,
     });
+    const audioBase64 = audio.toString('base64');
     return res.json({
       ok: true,
-      format: format || 'mp3',
-      mp3Base64: mp3.toString('base64'),
+      format: fmt, // the ACTUAL synthesized format
+      audioBase64,
+      // back-compat: only populate mp3Base64 when the bytes are really mp3
+      mp3Base64: fmt === 'mp3' ? audioBase64 : undefined,
       durationMs,
       latencyMs,
     });
@@ -67,11 +114,9 @@ app.post('/api/tts', async (req: Request, res: Response) => {
 app.post('/api/tts-stream', async (req: Request, res: Response) => {
   const {
     text,
-    voice = 'Chinese (Mandarin)_Warm_Bestie',
+    voice, // 火山 speaker id; undefined → module default (zh_female_vv_uranus_bigtts)
     speed = 1.0,
-    model: ttsModel = 'speech-2.8-turbo',
     emotion,
-    languageBoost = 'Chinese',
     format: requestedFormat,
   } = req.body || {};
 
@@ -79,8 +124,10 @@ app.post('/api/tts-stream', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'text required (string)' });
   }
 
-  const format: 'pcm' | 'mp3' = requestedFormat === 'mp3' ? 'mp3' : 'pcm';
-  const sampleRate = 32000;
+  // Default to mp3 — the renderer accumulates mp3 chunks and plays them as one
+  // audio/mpeg blob. pcm is opt-in for callers that decode raw PCM16 themselves.
+  const format: 'pcm' | 'mp3' = requestedFormat === 'pcm' ? 'pcm' : 'mp3';
+  const sampleRate = 24000; // 火山 seed-tts output rate
 
   res.status(200);
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -105,14 +152,13 @@ app.post('/api/tts-stream', async (req: Request, res: Response) => {
   });
 
   try {
-    const stream = synthesizeMinimaxStream({
+    const stream = synthesizeVolcStream({
       text,
       voice,
       speed,
-      model: ttsModel,
       emotion,
-      languageBoost,
       format,
+      sampleRate,
       onFirstChunk: (ms) => {
         firstChunkMs = ms;
       },
@@ -328,8 +374,26 @@ async function handleConversation(ws: WSConn): Promise<void> {
       onStatus: (status) => {
         send({ type: 'recording-status', ...status });
       },
+      // Dry-run mode (WHITEBOARD_PUSH_DRYRUN=1): skip the real 飞书 CLI push so
+      // the full pipeline can be exercised without 飞书 OAuth (used by the
+      // realtime harness, and handy for a no-board demo). When unset, the
+      // RecordingSession falls back to the real larkUpdateWhiteboard.
+      pushWhiteboard: process.env.WHITEBOARD_PUSH_DRYRUN
+        ? async (wbToken: string, mermaid: string) => {
+            console.log(`[dryrun] whiteboard push skipped — ${mermaid.length} chars → ${wbToken}`);
+          }
+        : undefined,
     });
     return recording;
+  };
+
+  // PTT live board: ensure a scribe exists and is pointed at the bound board,
+  // WITHOUT entering recording mode (no mic-silence, no start()). The debounce
+  // inside addTranscript drives the redraws. No-op effect if no board is bound.
+  const ensureBoardScribe = (): RecordingSession => {
+    const rec = ensureRecording();
+    rec.setTarget(session.boundTarget);
+    return rec;
   };
 
   // Push the current binding state to the client (keeps UI honest).
@@ -344,7 +408,7 @@ async function handleConversation(ws: WSConn): Promise<void> {
   ws.on('close', () => {
     alive = false;
     session.interrupt();
-    if (recording) recording.stop();
+    if (recording) recording.dispose(); // cancel armed redraws; block future ones
     console.log(
       '[conversation] WS closed, session discarded (turns=' + session.turnCount + ')',
     );
@@ -528,6 +592,16 @@ async function handleConversation(ws: WSConn): Promise<void> {
         return;
       }
 
+      // Live whiteboard scribe (part 1/2): feed the user's words NOW so the
+      // board fills in WHILE Beeni thinks/replies — "someone writing as you
+      // talk". The debounce coalesces this with Beeni's reply (fed below) into
+      // one redraw for fast turns, or draws live-then-enriches for slow ones.
+      // The proposer is incremental, so the later reply-draw adds to this one
+      // rather than redrawing from scratch. No-op if no board bound.
+      if (session.boundTarget?.whiteboardToken) {
+        ensureBoardScribe().addTranscript(Date.now(), text);
+      }
+
       send({ type: 'turn-start', turn: session.turnCount + 1 });
       try {
         const result = await session.sendUserTurn(text, {
@@ -540,6 +614,13 @@ async function handleConversation(ws: WSConn): Promise<void> {
         // session and refresh client.
         if (session.boundTarget && recording) {
           recording.setTarget(session.boundTarget);
+        }
+        // Live whiteboard scribe (part 2/2): feed Beeni's reply — it often
+        // states the conclusions / next steps that belong on the board. The
+        // proposer skips chatter and applies this as an incremental delta on top
+        // of the live user-draw above.
+        if (session.boundTarget?.whiteboardToken && result.text) {
+          ensureBoardScribe().addTranscript(Date.now(), result.text);
         }
         sendBindState();
         send({
@@ -574,4 +655,7 @@ server.listen(PORT, () => {
   console.log(`[server] lark-voice-doc listening on http://localhost:${PORT}`);
   console.log('[server] endpoints: /api/health, /api/tts, /api/tts-stream, /api/stt (WS),');
   console.log('         /api/lark/*, /api/agent/run, /api/conversation (WS)');
+  // Pre-open the warm 火山 TTS connection so the FIRST spoken reply skips the
+  // ~3.5-5.5s cold-connect (first audio then comes in ~1.2s).
+  prewarmVolcTts();
 });
