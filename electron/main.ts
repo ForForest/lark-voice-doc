@@ -227,6 +227,9 @@ function createTray(): void {
       click: () => hidePill(),
     },
     { type: 'separator' },
+    { label: '背景资料…', click: () => openContextWindow() },
+    { label: '设置 (API key)…', click: () => createSetupWindow() },
+    { type: 'separator' },
     { label: 'Quit Beeni', role: 'quit' },
   ]);
   tray.setContextMenu(menu);
@@ -541,6 +544,18 @@ function createSetupWindow(): void {
   });
   setupWindow.loadURL(`${SERVER_BASE}/setup`);
   setupWindow.on('closed', () => { setupWindow = null; });
+}
+let contextWindow: BrowserWindow | null = null;
+function openContextWindow(): void {
+  if (contextWindow) { contextWindow.focus(); return; }
+  contextWindow = new BrowserWindow({
+    width: 720,
+    height: 780,
+    title: 'Beeni · 背景资料',
+    backgroundColor: '#f5f3ee',
+  });
+  contextWindow.loadURL(`${SERVER_BASE}/context`);
+  contextWindow.on('closed', () => { contextWindow = null; });
 }
 function launchPill(): void {
   if (process.platform === 'darwin') app.dock?.hide();

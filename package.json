@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test:tts": "tsx scripts/_smoke-volc-tts.ts",
     "test:realtime": "tsx scripts/_e2e-realtime-whiteboard.ts",
+    "test:context": "tsx scripts/_e2e-context.ts",
     "test:ptt": "tsx scripts/_e2e-renderer-flow-fixed.ts",
     "test:ptt:bug-repro": "tsx scripts/_e2e-renderer-bug-repro.ts",
     "test:e2e-real-audio": "tsx scripts/_e2e-ptt-real-audio.ts",
@@ -23,9 +24,12 @@
     "start": "npm run build:pill && electron ."
   },
   "dependencies": {
+    "@types/pdf-parse": "^1.1.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
+    "mammoth": "^1.12.0",
     "openai": "^4.83.0",
+    "pdf-parse": "^2.4.5",
     "uiohook-napi": "^1.5.5",
     "ws": "^8.18.0"
   },

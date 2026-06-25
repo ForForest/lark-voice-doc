@@ -525,6 +525,7 @@ export interface BoundDocRef {
 export class ConversationSession {
   private messages: ChatMessage[];
   private model: string;
+  private background = ''; // imported background material (paste/docs)
   private abortCtrl: AbortController | null = null;
   /** The single target doc — all writes go here. */
   public boundTarget: BoundDocRef | null = null;
@@ -542,6 +543,27 @@ export class ConversationSession {
     this.messages = [
       { role: 'system', content: opts?.systemPrompt || CONVERSATION_SYSTEM_PROMPT },
     ];
+  }
+
+  /** Set the imported background material (paste / uploaded docs). Injected as a
+   *  second system message each turn — always current, never stored in history. */
+  setBackground(text: string): void {
+    this.background = (text || '').trim();
+  }
+
+  /** Messages actually sent to the model: history with the background block
+   *  injected right after the system prompt (if any background is loaded). */
+  private outgoingMessages(): ChatMessage[] {
+    if (!this.background) return this.messages;
+    const [sys, ...rest] = this.messages;
+    const bg: ChatMessage = {
+      role: 'system',
+      content:
+        '【背景资料】用户从别处导入了以下背景（可能是与其他 AI 的对话、文档或笔记），' +
+        '讨论时请结合参考、可主动引用，但始终以用户当前说的话为准：\n\n' +
+        this.background,
+    };
+    return [sys, bg, ...rest];
   }
 
   /** Whether a turn is currently in flight. */
@@ -719,7 +741,7 @@ export class ConversationSession {
         rounds = round;
         const { assistantMsg, finishReason, aborted: wasAborted } = await streamArkCall(
           this.model,
-          this.messages,
+          this.outgoingMessages(),
           this.abortCtrl.signal,
           (tok) => options.onAssistantToken?.(tok),
         );

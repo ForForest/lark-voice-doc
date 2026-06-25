@@ -30,6 +30,7 @@ import {
 } from './lib/lark';
 import { runAgent, ConversationSession, RecordingSession } from './lib/agent-loop';
 import { getSetupStatus, saveEnv, testArk, testVolc } from './lib/setup';
+import { addContext, listContexts, removeContext, clearContexts, extractFile, getContextText } from './lib/context-store';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { WebSocket as WSConn } from 'ws';
@@ -80,6 +81,55 @@ app.post('/api/setup/test', async (req, res) => {
     return res.status(400).json({ ok: false, detail: 'service must be ark | volc' });
   } catch (err) {
     res.status(500).json({ ok: false, detail: (err as Error).message });
+  }
+});
+
+// ── Background material import (paste text / upload docs) ─────────────────────
+// The user loads background (an AI chat export, a spec, notes) in the 背景资料
+// window; the conversation agent injects it so Beeni discusses with it in mind.
+app.get('/context', async (_req, res) => {
+  try {
+    const html = await readFile(path.join(process.cwd(), 'public', 'context.html'), 'utf-8');
+    res.type('html').send(html);
+  } catch (err) {
+    res.status(500).send(`context page missing: ${(err as Error).message}`);
+  }
+});
+
+app.get('/api/context/list', (_req, res) => {
+  res.json({ items: listContexts() });
+});
+
+app.post('/api/context/add', (req, res) => {
+  try {
+    const { label, text, source } = req.body || {};
+    const item = addContext(label, text, source === 'file' ? 'file' : 'paste');
+    res.json({ ok: true, item, items: listContexts() });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: (err as Error).message });
+  }
+});
+
+app.post('/api/context/remove', (req, res) => {
+  removeContext(String((req.body || {}).id || ''));
+  res.json({ ok: true, items: listContexts() });
+});
+
+app.post('/api/context/clear', (_req, res) => {
+  clearContexts();
+  res.json({ ok: true, items: [] });
+});
+
+// Raw file upload → extracted text (the page then POSTs it to /add).
+app.post('/api/context/extract', express.raw({ type: '*/*', limit: '40mb' }), async (req, res) => {
+  try {
+    const filename = String((req.query.filename as string) || 'file.txt');
+    const buf = Buffer.isBuffer(req.body) ? (req.body as Buffer) : Buffer.from([]);
+    if (buf.length === 0) return res.status(400).json({ ok: false, error: '空文件' });
+    const text = await extractFile(filename, buf);
+    res.json({ ok: true, filename, text, chars: text.length });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: `解析失败：${(err as Error).message}` });
   }
 });
 
@@ -601,6 +651,10 @@ async function handleConversation(ws: WSConn): Promise<void> {
       if (session.boundTarget?.whiteboardToken) {
         ensureBoardScribe().addTranscript(Date.now(), text);
       }
+
+      // Keep the agent's background material current (paste/docs the user
+      // imported in the 背景资料 window) before each turn.
+      session.setBackground(getContextText());
 
       send({ type: 'turn-start', turn: session.turnCount + 1 });
       try {
