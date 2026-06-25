@@ -705,6 +705,22 @@ function looksLikeSummaryRequest(text: string): boolean {
   return /总结|画(出)?|画图|白板|记一下|梳理|整理|画到|更新白板/.test(text);
 }
 
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    // Another instance (a leftover server or a second pill) already owns the
+    // port. Exit cleanly with a clear message instead of an unhandled crash —
+    // the Electron host detects an existing healthy backend and reuses it.
+    console.error(
+      `[server] port ${PORT} already in use — another backend is likely running. ` +
+        `Reusing it (this process exits). To force a fresh one, free the port: ` +
+        `lsof -ti tcp:${PORT} | xargs kill`,
+    );
+    process.exit(0);
+  }
+  console.error('[server] fatal listen error:', err.message);
+  process.exit(1);
+});
+
 server.listen(PORT, () => {
   console.log(`[server] lark-voice-doc listening on http://localhost:${PORT}`);
   console.log('[server] endpoints: /api/health, /api/tts, /api/tts-stream, /api/stt (WS),');

@@ -563,8 +563,24 @@ function launchPill(): void {
   showPill(false);
   scheduleIdleHide();
 }
+async function isServerHealthy(): Promise<boolean> {
+  try {
+    return (await fetch(`${SERVER_BASE}/api/health`)).ok;
+  } catch {
+    return false;
+  }
+}
 async function bootUI(): Promise<void> {
-  const healthy = await waitForServerHealth();
+  // Reuse an already-running backend (a leftover server from a prior run, or a
+  // second pill launch) instead of spawning another one that would crash with
+  // EADDRINUSE on :3001.
+  let healthy = await isServerHealthy();
+  if (healthy) {
+    console.log(`[main] backend already running on ${SERVER_BASE} — reusing it`);
+  } else {
+    startBackendServer();
+    healthy = await waitForServerHealth();
+  }
   const status = healthy ? await fetchSetupStatus() : null;
   if (!healthy || (status && status.allReady)) {
     // Keys present (or we can't tell) — go straight to the pill.
@@ -590,11 +606,10 @@ app.whenReady().then(() => {
   if (process.platform === 'darwin') {
     app.dock?.hide();
   }
-  startBackendServer();
   createTray();
   registerHotkey();
   setupPushToTalk();
-  // Decide between setup wizard and the pill once the backend is up.
+  // bootUI reuses an existing backend or spawns one, then shows setup/pill.
   void bootUI();
 });
 
