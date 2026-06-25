@@ -39,6 +39,11 @@ const DEFAULT_RESOURCE_ID = process.env.VOLC_TTS_RESOURCE_ID || 'seed-tts-2.0';
 const DEFAULT_VOICE = process.env.VOLC_TTS_VOICE || 'zh_female_vv_uranus_bigtts';
 const DEFAULT_FORMAT = (process.env.VOLC_TTS_FORMAT as 'mp3' | 'pcm') || 'mp3';
 const DEFAULT_SAMPLE_RATE = Number(process.env.VOLC_TTS_SAMPLE_RATE || 24000);
+// Steady, composed tone for the insight-driven creative partner: 'professional'
+// emotion + a touch slower than 1.0 so it sounds considered, not rushed.
+// (All emotions verified to not error on the seed-tts-2.0 voice.)
+const DEFAULT_EMOTION = process.env.VOLC_TTS_EMOTION || 'professional';
+const DEFAULT_SPEED = process.env.VOLC_TTS_SPEED ? Number(process.env.VOLC_TTS_SPEED) : 0.95;
 // Time budget to establish the connection (WS upgrade + StartConnection ack).
 const CONNECT_TIMEOUT_MS = Number(process.env.VOLC_TTS_CONNECT_TIMEOUT_MS || 20000);
 // Fail a session after this long with NO frames (inactivity watchdog).
@@ -378,12 +383,14 @@ class VolcTtsConnection {
     const reqId = randomUUID();
     const sessionId = randomUUID();
 
+    const speed = opts.speed ?? DEFAULT_SPEED;
+    const emotion = opts.emotion ?? DEFAULT_EMOTION;
     const audioParams: Record<string, any> = {
       format,
       sample_rate: sampleRate,
-      speech_rate: speedToSpeechRate(opts.speed),
+      speech_rate: speedToSpeechRate(speed),
     };
-    if (opts.emotion && opts.emotion !== 'auto') audioParams.emotion = opts.emotion;
+    if (emotion && emotion !== 'auto' && emotion !== 'none') audioParams.emotion = emotion;
     const reqParams = { speaker: voice, audio_params: audioParams };
 
     const queue: Buffer[] = [];

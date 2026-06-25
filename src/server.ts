@@ -165,8 +165,8 @@ app.post('/api/tts-stream', async (req: Request, res: Response) => {
   const {
     text,
     voice, // 火山 speaker id; undefined → module default (zh_female_vv_uranus_bigtts)
-    speed = 1.0,
-    emotion,
+    speed, // undefined → module default (steady 0.95)
+    emotion, // undefined → module default ('professional')
     format: requestedFormat,
   } = req.body || {};
 
