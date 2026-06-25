@@ -1,13 +1,22 @@
 # lark-voice-doc
 
-A desktop, voice-driven research-and-writing tool. Talk to it, and an LLM agent
-researches, drafts, and writes the result straight into [Lark / 飞书](https://www.feishu.cn/)
-documents and whiteboards.
+A desktop, voice-driven creative-discussion tool. Talk to a sharp AI partner and
+the conversation gets scribed onto a [飞书 / Lark](https://www.feishu.cn/)
+whiteboard **live, as you speak** — like someone writing on the board while you
+brainstorm. It probes, challenges, pushes your ideas forward, and summarizes.
 
-> **Status: early / experimental.** This is a working prototype, not a polished
-> product. Some tools are stubs (e.g. `web_search`), the Lark integration shells
-> out to the official CLI and requires a one-time OAuth, and the UI is rough.
-> Expect to read the code.
+> **Status: early / experimental.** A working prototype, not a polished product.
+> Some tools are stubs (e.g. `web_search`), the 飞书 whiteboard integration
+> shells out to the official Lark CLI (one-time OAuth), and the UI is rough.
+> Built on an all-火山/豆包 stack (火山 ASR + TTS, Doubao Seed 2.0).
+
+<!-- TODO: drop a demo GIF here — "talk → the whiteboard fills in" is the wow.
+     Record the pill + a 飞书 board side by side and save as docs/demo.gif:
+     ![demo](./docs/demo.gif) -->
+
+| First-run setup wizard | Background import |
+|---|---|
+| ![setup wizard](./docs/setup-wizard.png) | ![background import](./docs/background-import.png) |
 
 ## What it does
 
